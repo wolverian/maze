@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"image"
 	"image/color"
 	"image/color/palette"
@@ -79,10 +78,8 @@ func (g *Grid) RenderRegions(w io.Writer) error {
 	mats := make(map[Material]color.Color)
 	mats[Rock] = color.Black
 	mats[Carved] = color.White
-	fmt.Printf("regions: %s\n", len(g.regions))
 	for y := 0; y < g.Size.Y; y++ {
 		for x := 0; x < g.Size.X; x++ {
-			fmt.Printf("region(%s)\n", y*g.Size.X+x)
 			img.Set(x, y, palette.Plan9[g.RegionAt(Pt(x, y))%256])
 		}
 	}
