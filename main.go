@@ -34,6 +34,18 @@ type Grid struct {
 	regCount Region
 }
 
+func (g *Grid) Regions() []Region {
+	regs := make([]Region, 0)
+
+	var i Region
+
+	for i = 0; i < g.regCount; i++ {
+		regs = append(regs, i)
+	}
+
+	return regs
+}
+
 func (g *Grid) NewRegion() Region {
 	g.regCount++
 	return g.regCount
@@ -73,8 +85,7 @@ func (g *Grid) RenderMaterials(w io.Writer) error {
 	return err
 }
 
-func (g *Grid) RenderRegions(w io.Writer) error {
-	img := image.NewPaletted(g.Bounds(), palette.Plan9)
+func (g *Grid) RenderRegions(img *image.Paletted) {
 	mats := make(map[Material]color.Color)
 	mats[Rock] = color.Black
 	mats[Carved] = color.White
@@ -83,8 +94,6 @@ func (g *Grid) RenderRegions(w io.Writer) error {
 			img.Set(x, y, palette.Plan9[g.RegionAt(Pt(x, y))%256])
 		}
 	}
-	err := png.Encode(w, img)
-	return err
 }
 
 type Point struct{ image.Point }
@@ -99,18 +108,36 @@ func (p Point) Add(o Point) Point {
 	return Point{pt}
 }
 
+func (p Point) AddDir(d direction) Point {
+	return p.Add(*d.Point)
+}
+
+func (p Point) Mul(i int) Point {
+	pt := p.Point.Mul(i)
+	return Point{pt}
+}
+
 type RoomParams struct {
 	Min, Max Point
 }
 
-var Dir = struct {
-	Up    Point
-	Right Point
-	Down  Point
-	Left  Point
-}{Pt(0, -1), Pt(1, 0), Pt(0, 1), Pt(-1, 0)}
+type direction struct {
+	*Point
+}
 
-var Dirs = []Point{Dir.Up, Dir.Right, Dir.Down, Dir.Left}
+func (d direction) Reverse() direction {
+	pt := d.Point.Mul(-1)
+	return direction{&pt}
+}
+
+func D(x int, y int) direction {
+	pt := Pt(x, y)
+	return direction{&pt}
+}
+
+var Dir = struct{ Up, Right, Down, Left direction }{D(0, -1), D(1, 0), D(0, 1), D(-1, 0)}
+
+var Dirs = []direction{Dir.Up, Dir.Right, Dir.Down, Dir.Left}
 
 func main() {
 	build()
@@ -133,9 +160,10 @@ func build() {
 
 	growMaze(grid)
 
-	joinSomeRegions(grid)
+	//joinSomeRegions(grid)
+	conns := findConnectors(grid)
 
-	writeImage(grid, "maze.png")
+	writeImageAnnotated(grid, conns, "maze.png")
 }
 
 func newGrid(size Point) *Grid {
@@ -195,7 +223,7 @@ func grow(grid *Grid, from Point, region Region) {
 
 		cell := cells[rand.Intn(len(cells))] //cells[len(cells)-1]
 
-		unmade := make([]Point, 0)
+		unmade := make([]direction, 0)
 
 		for _, d := range Dirs {
 			if canCarve(grid, cell, d) {
@@ -205,36 +233,106 @@ func grow(grid *Grid, from Point, region Region) {
 
 		if len(unmade) > 0 {
 			dir := unmade[rand.Intn(len(unmade))]
-			grid.SetMaterial(cell.Add(dir), Carved)
-			grid.SetRegion(cell.Add(dir), region)
-			grid.SetMaterial(cell.Add(dir).Add(dir), Carved)
-			grid.SetRegion(cell.Add(dir).Add(dir), region)
-			cells = append(cells, cell.Add(dir).Add(dir))
+			grid.SetMaterial(cell.AddDir(dir), Carved)
+			grid.SetRegion(cell.AddDir(dir), region)
+			grid.SetMaterial(cell.AddDir(dir).AddDir(dir), Carved)
+			grid.SetRegion(cell.AddDir(dir).AddDir(dir), region)
+			cells = append(cells, cell.AddDir(dir).AddDir(dir))
 		} else {
 			cells = cells[1:]
 		}
 	}
 }
 
-func canCarve(g *Grid, from Point, dir Point) bool {
-	beyond := from.Add(dir).Add(dir).Add(dir)
-	next := from.Add(dir).Add(dir)
+func canCarve(g *Grid, from Point, dir direction) bool {
+	beyond := from.AddDir(dir).AddDir(dir).AddDir(dir)
+	next := from.AddDir(dir).AddDir(dir)
 
 	return beyond.In(g.Bounds()) && g.At(next) == Rock
 }
 
 func joinSomeRegions(g *Grid) {
+	for {
+		regions := g.Regions()
+		connectors := findConnectors(g)
+		mr := regions[rand.Intn(len(regions))]
+		mcs := make([]connector, 0)
+
+		for _, c := range connectors {
+			if c.a.region == mr || c.b.region == mr {
+				mcs = append(mcs, c)
+			}
+		}
+
+		break
+	}
 }
 
-func writeImage(grid *Grid, file string) {
+type conn struct {
+	dir    direction
+	region Region
+}
+
+type connector struct {
+	a, b conn
+	loc  Point
+}
+
+func findConnectors(g *Grid) []connector {
+	bounds := g.Bounds()
+	conns := make([]connector, 0)
+
+	for y := bounds.Min.Y + 2; y < bounds.Max.Y-2; y += 1 {
+		for x := bounds.Min.X + 2; x < bounds.Max.X-2; x += 1 {
+			here := Pt(x, y)
+			mat := g.At(here)
+			if mat != Rock {
+				continue
+			}
+			for _, dir := range Dirs {
+				theOtherWay := dir.Reverse()
+				a := here.AddDir(dir)
+				b := here.AddDir(theOtherWay)
+				ra := g.RegionAt(a)
+				rb := g.RegionAt(b)
+
+				if g.At(a) == Rock || g.At(b) == Rock {
+					continue
+				}
+
+				if ra != rb {
+					conns = append(conns, connector{
+						a:   conn{dir: dir, region: ra},
+						b:   conn{dir: theOtherWay, region: rb},
+						loc: here,
+					})
+				}
+			}
+		}
+	}
+
+	return conns
+}
+
+func writeImageAnnotated(g *Grid, conns []connector, file string) {
 	w, err := os.Create(file)
+	defer w.Close()
 	if err != nil {
 		log.Fatalf("Can not create file '%s': %s\n", file, err)
 	}
 
-	//err = grid.RenderMaterials(w)
-	err = grid.RenderRegions(w)
+	//err = g.RenderMaterials(w)
+	img := image.NewPaletted(g.Bounds(), palette.Plan9)
+	g.RenderRegions(img)
+	renderConnectors(img, conns)
+	err = png.Encode(w, img)
 	if err != nil {
 		log.Fatalf("Can not write image to '%s': %s\n", file, err)
+	}
+}
+
+func renderConnectors(img *image.Paletted, conns []connector) {
+	for _, c := range conns {
+		img.Set(c.loc.X, c.loc.Y, palette.Plan9[200])
 	}
 }
