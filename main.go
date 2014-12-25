@@ -216,9 +216,9 @@ func grow(grid *Grid, from Point, region Region) {
 	}
 }
 
-func canCarve(g *Grid, from Point, to Point) bool {
-	beyond := from.Add(to).Add(to).Add(to)
-	next := from.Add(to).Add(to)
+func canCarve(g *Grid, from Point, dir Point) bool {
+	beyond := from.Add(dir).Add(dir).Add(dir)
+	next := from.Add(dir).Add(dir)
 
 	return beyond.In(g.Bounds()) && g.At(next) == Rock
 }
